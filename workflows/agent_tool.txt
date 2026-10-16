@@ -1,0 +1,92 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "query"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4a24a84e-1d10-4f2d-be26-c58d897b19fe",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.safeQuery }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        448,
+        0
+      ],
+      "id": "ef7656d7-cdd0-4de3-bb06-672d71f5ab96",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "kU7JM6cRI1QJO4KM",
+          "name": "read only"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const query = $input.first().json.query || '';\n\n// Remove trailing semicolons and whitespace\nlet cleaned = query.trim().replace(/;+\\s*$/, '');\nconst lowered = cleaned.toLowerCase();\n\nconst forbidden = [\n  'drop', 'delete ', 'update ', 'insert ', 'alter ',\n  'truncate', 'grant', 'revoke', 'create ', '--'\n];\n\nif (!lowered.startsWith('select')) {\n  throw new Error('Only SELECT queries are allowed.');\n}\n\nfor (const word of forbidden) {\n  if (lowered.includes(word)) {\n    throw new Error(`Query contains forbidden keyword: \"${word.trim()}\"`);\n  }\n}\n\n// Add LIMIT only if not already present\nif (!lowered.includes('limit')) {\n  cleaned += ' LIMIT 100';\n}\n\nreturn { json: { safeQuery: cleaned } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "26459437-b7bb-455f-a13a-5a754c0d7509",
+      "name": "validate-query"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "validate-query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "validate-query": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "query": "SELECT COUNT(*) FROM invoices;"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "771b59a2e451c2127ff087997e7ea1ed69e4cb9eb934953ccf18f1c7ffabdf2a"
+  }
+}

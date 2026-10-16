@@ -1,0 +1,641 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const j = $input.first().json;\nconst raw =\n  j.content?.parts?.[0]?.text ??\n  j.candidates?.[0]?.content?.parts?.[0]?.text ??\n  j.text ?? j.output ?? '';\nconst text = String(raw).replace(/```json|```/g, '').trim();\n\nlet data;\ntry {\n  data = JSON.parse(text);\n} catch (e) {\n  return { json: { document_type: 'other' } };\n}\n\nconst pos = Number(data.positive_adjustments) || 0;\nconst neg = Number(data.negative_adjustments) || 0;\ndata.adjustments_total = Number((pos - neg).toFixed(2));\n\nreturn { json: data };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        128
+      ],
+      "id": "19a2d7a5-e84a-49fa-8f50-a2e27aa3fdae",
+      "name": "Parse Extraction"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "text": "={{ $json.prompt }}",
+        "inputType": "binary",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        672,
+        16
+      ],
+      "id": "b9f97b31-37df-41a9-96da-b2fcc0d93acc",
+      "name": "gemini",
+      "retryOnFail": true,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "IxhoyLfAI2zE4MUo",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO vendors (name)\nVALUES ($1)\nON CONFLICT (name)\nDO UPDATE SET name = EXCLUDED.name\nRETURNING id;",
+        "options": {
+          "queryReplacement": "=={{ [ $('Parse Extraction').item.json.vendor_name || 'UNKNOWN_VENDOR' ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        464,
+        368
+      ],
+      "id": "e25ff3cb-5a73-4ac1-8e4b-8062e2fe1cbe",
+      "name": "vendor",
+      "credentials": {
+        "postgres": {
+          "id": "nK4eKTX7EhuFnjgl",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO invoices (\n    vendor_id,\n    invoice_number,\n    invoice_date,\n    currency,\n    total_amount,\n    confidence_score,\n    status,\n    validation_reason,\n    original_file_path\n)\nVALUES (\n    $1,\n    $2,\n    $3,\n    $4,\n    $5,\n    $6,\n    $7,\n    $8,\n    $9\n)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "=={{ [\n  $json.id,\n  $('Parse Extraction').item.json.invoice_number ?? null,\n  $('Parse Extraction').item.json.invoice_date ?? null,\n  $('Parse Extraction').item.json.currency ?? null,\n  $('Parse Extraction').item.json.total_amount ?? null,\n  $('Parse Extraction').item.json.confidence_score ?? null,\n  $('validate_invoice').item.json.status,\n  $('validate_invoice').item.json.validation_reason ?? null,\n  $('prompt').item.json.original_file_path ?? null\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        624,
+        368
+      ],
+      "id": "b4c8e526-8800-4b4c-a7e9-0830c6aaf8ce",
+      "name": "invoice",
+      "credentials": {
+        "postgres": {
+          "id": "nK4eKTX7EhuFnjgl",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "=line_items",
+        "include": "selectedOtherFields",
+        "fieldsToInclude": "id",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        976,
+        368
+      ],
+      "id": "cdc811a3-3d73-4083-907f-098761d37714",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        816,
+        368
+      ],
+      "id": "bbf03134-7e2a-4d3f-86c7-22585bd8e059",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO line_items (\n    invoice_id,\n    description,\n    quantity,\n    unit_price\n)\nVALUES (\n    $1,\n    $2,\n    $3,\n    $4\n)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "==={{ [\n  $json.id,\n  $json.line_items?.[0] ?? null,\n  $json.line_items?.[1] !== undefined && $json.line_items?.[1] !== null \n    ? Number($json.line_items[1]) \n    : null,\n  $json.line_items?.[2] !== undefined && $json.line_items?.[2] !== null \n    ? Number($json.line_items[2]) \n    : null\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1152,
+        368
+      ],
+      "id": "a3bd2c47-0289-4229-a46d-fe344e2cb955",
+      "name": "line_item",
+      "credentials": {
+        "postgres": {
+          "id": "nK4eKTX7EhuFnjgl",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nconst items = $input.all();\n\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const bin = item.binary?.data;\n  const mime = (bin?.mimeType || '').toLowerCase();\n  let kind = 'other';\n  let body = '';\n\n  if (bin && (mime.startsWith('image/') || mime === 'application/pdf')) {\n    kind = 'binary';\n  } else if (mime === 'text/plain' || mime === 'text/html') {\n    kind = 'text';\n    body = (await this.helpers.getBinaryDataBuffer(i, 'data')).toString('utf8');\n  } else if (!bin) {\n    const raw = item.json.textHtml || item.json.textPlain || item.json.text;\n    if (raw) { kind = 'text'; body = raw; }\n  }\n\n  if (kind === 'text') {\n    body = body\n      .replace(/<(script|style)[\\s\\S]*?<\\/\\1>/gi, ' ')\n      .replace(/<br\\s*\\/?>|<\\/(p|div|tr|li|h\\d)>/gi, '\\n')\n      .replace(/<[^>]+>/g, ' ')\n      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')\n      .replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n')\n      .trim()\n      .slice(0, 15000);\n  }\n\n  out.push({\n    json: { ...item.json, kind, body_text: body },\n    binary: item.binary,\n    pairedItem: { item: i },\n  });\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        -160
+      ],
+      "id": "32d5ffdd-ba3e-418e-9842-565861428f91",
+      "name": "prepare_type"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "binary",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "98c920b1-da18-4959-a5b9-9469ab5d7429"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c52697e6-f951-4e19-8bcf-86559f94bc48",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "5658d805-9dbf-4a83-ad20-d32136edf2ab",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "other",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        368,
+        112
+      ],
+      "id": "e1c0cdb1-cf28-4d5a-91a1-65e3ca217325",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}\n\nHere is the document text:\n\n{{ $json.body_text }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        608,
+        160
+      ],
+      "id": "ecf8099d-fe6c-4eca-beb8-46c64d3fa5ce",
+      "name": "gemini1",
+      "retryOnFail": true,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "IxhoyLfAI2zE4MUo",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d30127ea-8b85-4dd5-a49b-4898e6dcbe6b",
+              "leftValue": "={{ $json.document_type }}",
+              "rightValue": "invoice",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1072,
+        128
+      ],
+      "id": "79d71574-4d50-4d32-aafd-1bea7c4955b9",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "format": "resolved",
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\"]",
+          "trackLastMessageId": true
+        }
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.2,
+      "position": [
+        576,
+        -160
+      ],
+      "id": "138681bb-eed2-464a-b177-bb3258c1f412",
+      "name": "Email Trigger (IMAP)",
+      "credentials": {
+        "imap": {
+          "id": "GcMBN2V271wdOonl",
+          "name": "IMAP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nconst okMime = ['application/pdf', 'text/plain', 'text/html'];\nconst items = $input.all();\n\nfor (let i = 0; i < items.length; i++) {\n  const j = items[i].json;\n  const bins = items[i].binary || {};\n  const keys = Object.keys(bins).filter(k => {\n    const m = (bins[k].mimeType || '').toLowerCase();\n    return m.startsWith('image/') || okMime.includes(m);\n  });\n  const base = { subject: j.subject, from: j.from?.text ?? j.from, messageId: j.messageId };\n  const safeId = (j.messageId || Date.now().toString()).replace(/[^a-zA-Z0-9]/g, '_');\n\n  if (keys.length) {\n    for (const k of keys) {\n      const fname = bins[k].fileName || `${k}.bin`;\n      out.push({\n        json: { ...base, original_file_path: `/files/invoices/${safeId}_${fname}` },\n        binary: { data: bins[k] },\n        pairedItem: { item: i },\n      });\n    }\n  } else {\n    const raw = j.textHtml || j.textPlain || j.text || '';\n    out.push({\n      json: { ...base, original_file_path: `/files/invoices/${safeId}.txt` },\n      binary: { data: { data: Buffer.from(raw).toString('base64'), mimeType: 'text/plain', fileName: `${safeId}.txt` } },\n      pairedItem: { item: i },\n    });\n  }\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        -160
+      ],
+      "id": "1f27b403-617d-4ae2-87a1-85d1b23d1029",
+      "name": "split_email"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1353210d-411e-463e-bfb8-bc96beb489e8",
+              "name": "prompt",
+              "value": "You are an invoice data extraction system.  Analyze the provided invoice image and extract the following information.  Return ONLY valid JSON using exactly this structure:  { \"document_type\": \"invoice | credit_note | proforma | quote | delivery_note | receipt | other\",  \"vendor_name\": \"string or null\",   \"invoice_number\": \"string or null\",   \"invoice_date\": \"YYYY-MM-DD or null\",   \"positive_adjustments\": 0,   \"negative_adjustments\": 0,   \"total_amount\": 0,   \"currency\": \"string or null\",   \"line_items\": [[\"description\", quantity, unit_price]],   \"confidence_score\": 0 }  document_type: classify the document. Use \"invoice\" only for a real invoice or bill. If the document is not an invoice (letter, newsletter, contract, random text), use \"other\" and set all other fields to null / 0 / [].Financial adjustments: - positive_adjustments: Sum of all charges added to the subtotal (taxes, VAT, shipping, handling, fees). Return as a positive number. Return 0 if none. - negative_adjustments: Sum of all reductions subtracted from the subtotal (discounts, coupons, credits, deposits already paid). Return as a positive number. Return 0 if none.  Also provide confidence_score from 0 to 1 representing your confidence in the overall extraction.  Return ONLY valid JSON. Do not add markdown. Do not add explanations. Do not add ```json.  If a required field cannot be found, return null for that field. Do not invent missing information.  Currency normalization: - Always return the currency as a 3-letter ISO 4217 currency code. - Convert currency symbols and names into their corresponding codes. - Examples:   \"$\", \"US$\", \"USD\", \"US Dollar\" → \"USD\"   \"€\", \"EUR\", \"Euro\" → \"EUR\"   \"£\", \"GBP\", \"British Pound\", \"Pound Sterling\" → \"GBP\"   \"د.ت\", \"TND\", \"Tunisian Dinar\", \"Tunisian dinars\" → \"TND\" If the currency cannot be determined reliably, return null.  DATE HANDLING: Invoice dates must be interpreted using the YYYY-MM-DD convention.",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        912,
+        -160
+      ],
+      "id": "3caad0e3-64ae-4291-8edb-afc70a23c3d8",
+      "name": "prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://validation:8000/tools/validate-invoice",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vendor_name\": \"{{ $json.vendor_name }}\",\n  \"invoice_number\": \"{{ $json.invoice_number }}\",\n  \"invoice_date\": \"{{ $json.invoice_date }}\",\n  \"adjustments_total\": {{ $json.adjustments_total }},\n  \"total_amount\": {{ $json.total_amount }},\n  \"currency\": \"{{ $json.currency }}\",\n  \"line_items\": {{ JSON.stringify($json.line_items) }},\n  \"confidence_score\": {{ $json.confidence_score }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        144
+      ],
+      "id": "7efa8e73-93ae-411f-b87a-fe8e23b6cb9e",
+      "name": "validate_invoice"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $('split_email').item.json.original_file_path }}",
+        "dataPropertyName": "={{ $('split_email').item.binary.data }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        0
+      ],
+      "id": "ebea06cb-b5a9-43c8-a327-dcc5bfa40cac",
+      "name": "file_path"
+    },
+    {
+      "parameters": {
+        "content": "Collection & Preparation",
+        "width": 1504,
+        "color": "#BD0000"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        64,
+        -176
+      ],
+      "typeVersion": 1,
+      "id": "a38ceb82-7257-4a5c-8b9b-a8423f5b9cde",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "Processing & Validation",
+        "height": 288,
+        "width": 1504,
+        "color": "#3C0CC0"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        64,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "e5187c9a-603b-4fc5-b28a-a772234a507c",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "Storage",
+        "height": 224,
+        "width": 1504,
+        "color": "#238500"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        64,
+        304
+      ],
+      "typeVersion": 1,
+      "id": "530c71b1-bb54-4212-a1cb-e399286470e2",
+      "name": "Sticky Note2"
+    }
+  ],
+  "connections": {
+    "Parse Extraction": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gemini": {
+      "main": [
+        [
+          {
+            "node": "Parse Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "vendor": {
+      "main": [
+        [
+          {
+            "node": "invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "invoice": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "line_item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare_type": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "gemini",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "gemini1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "gemini1": {
+      "main": [
+        [
+          {
+            "node": "Parse Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "file_path",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "validate_invoice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "split_email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "split_email": {
+      "main": [
+        [
+          {
+            "node": "prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prompt": {
+      "main": [
+        []
+      ]
+    },
+    "validate_invoice": {
+      "main": [
+        [
+          {
+            "node": "vendor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "file_path": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "771b59a2e451c2127ff087997e7ea1ed69e4cb9eb934953ccf18f1c7ffabdf2a"
+  }
+}

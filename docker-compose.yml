@@ -1,0 +1,106 @@
+name: invoice-ai
+
+services:
+
+  postgres:
+    image: postgres:18.4
+    container_name: invoice-ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - invoice_postgres_data:/var/lib/postgresql
+    networks:
+      - invoice-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: invoice-ai-qdrant
+    restart: unless-stopped
+    ports:
+      - "6334:6333"
+    volumes:
+      - invoice_qdrant_data:/qdrant/storage
+    networks:
+      - invoice-network
+
+  validation:
+    build: ./validation
+    container_name: invoice-ai-validation
+    restart: unless-stopped
+    ports:
+      - "8002:8000"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}       
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      - postgres
+    networks:
+      - invoice-network
+
+  streamlit:
+    build:
+      context: ./streamlit
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    container_name: invoice-ai-streamlit
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      FILES_BASE_PATH: /files/invoices
+      N8N_CHAT_WEBHOOK: http://n8n:5678/webhook/invoice_chat
+    volumes:
+      - ./input/invoices:/files/invoices:ro  #
+    depends_on:
+      - postgres
+    networks:
+      - invoice-network                    
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: invoice-ai-n8n
+    restart: unless-stopped
+    ports:
+      - "5680:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n_db
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_EDITOR_BASE_URL=http://localhost:5680
+      - WEBHOOK_URL=http://localhost:5680/
+      - N8N_SECURE_COOKIE=false
+      - N8N_RESTRICT_FILE_ACCESS_TO=/files/invoices
+    volumes:
+      - invoice_n8n_data:/home/node/.n8n
+      - ./input/invoices:/files/invoices
+    depends_on:
+      - postgres
+      - validation
+    networks:
+      - invoice-network
+
+volumes:
+  invoice_postgres_data:
+  invoice_qdrant_data:
+  invoice_n8n_data:
+
+networks:
+  invoice-network:
+    driver: bridge

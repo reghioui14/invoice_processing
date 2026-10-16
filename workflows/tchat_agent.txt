@@ -1,0 +1,194 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice_chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "cd09a220-e9d1-491c-90d9-b728588cea9b",
+      "name": "Webhook",
+      "webhookId": "5bb249c2-448d-42ca-a317-debee8542ea8"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.body.question }}",
+        "options": {
+          "systemMessage": "You are a financial assistant with access to an invoice database.\n\nDatabase schema:\n- vendors(id, name, created_at)\n- invoices(id, vendor_id, invoice_number, invoice_date, currency, total_amount, confidence_score, status, validation_reason, payment_status, paid_at, original_file_path, created_at)\n- line_items(id, invoice_id, description, quantity, unit_price)\n- corrections(id, invoice_id, field_name, old_value, new_value, corrected_by, corrected_at)\n\nRules:\n- You can only query using the \"Execute SQL Query\" tool.\n- Only SELECT statements are allowed.\n- Always JOIN vendors when the vendor name is needed (invoices.vendor_id = vendors.id).\n- status values are: 'auto_approved', 'approved', 'flagged'.\n- payment_status values are: 'paid', 'unpaid'.\n- When the user says \"this month\", filter using invoice_date within the current calendar month.\n- Give clear, concise answers with real numbers (e.g. amounts, counts).\n- If the question is ambiguous, make a reasonable assumption and state it."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        224,
+        0
+      ],
+      "id": "a853be0f-0153-4656-ab41-f8994231393e",
+      "name": "AI Agent",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        144,
+        160
+      ],
+      "id": "f83efcc1-1513-4549-aa22-79ef0e27f320",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "IxhoyLfAI2zE4MUo",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Executes a read-only SELECT SQL query against the invoice database and returns the results as JSON rows.",
+        "workflowId": {
+          "__rl": true,
+          "value": "oObE4RLJmD2ysKVG",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/oObE4RLJmD2ysKVG",
+          "cachedResultName": "query"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "query": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('query', ``, 'string') }}"
+          },
+          "matchingColumns": [
+            "query"
+          ],
+          "schema": [
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        384,
+        208
+      ],
+      "id": "5c0fbbc2-6b3f-4354-88d1-3150a228174b",
+      "name": "Call 'query'"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"answer\": $json.output } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        592,
+        0
+      ],
+      "id": "996f08ba-fd11-43b7-bb28-6b1902fe0036",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "incoices-agent",
+        "contextWindowLength": 9
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        272,
+        192
+      ],
+      "id": "a4be3bcc-bd90-4180-959a-a7f0b2f18202",
+      "name": "Simple Memory"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'query'": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "771b59a2e451c2127ff087997e7ea1ed69e4cb9eb934953ccf18f1c7ffabdf2a"
+  }
+}
